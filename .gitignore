@@ -1,0 +1,15 @@
+# Sensitive files
+credentials.json
+token.json
+.alerted.json
+.snooze
+
+# Node
+node_modules/
+dist/
+
+# Logs
+*.log
+
+# macOS system junk
+.DS_Store
