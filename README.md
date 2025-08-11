@@ -18,29 +18,24 @@ A tiny Node/TypeScript tool that checks your Google Calendar and pops a SwiftDia
 
 ## Setup (first time on any Mac)
 
-### Clone
+### 1. Clone the repo
 
-```bash
-git clone <your-repo-url> ~/Code/calendar-notifications
-cd ~/Code/calendar-notifications
-```
-
-### Install deps and ensure SwiftDialog
+### 2. Install deps and ensure SwiftDialog
 
 ```
 ./install.sh
 ```
 
-### Add your Google OAuth client
+### 3. Add your Google OAuth client
 
-1. In Google Cloud Console, create an OAuth client ID of type Desktop.
-2. Download the JSON as credentials.json and place it in the repo root:
+3a. In Google Cloud Console, create an OAuth client ID of type Desktop.
+3b. Download the JSON as credentials.json and place it in the repo root:
 
 ```
 ~/Code/calendar-notifications/credentials.json
 ```
 
-3. Authenticale once:
+3c. Authenticale once:
 
 ```
 npx ts-node src/calendar-notification.ts
@@ -48,7 +43,7 @@ npx ts-node src/calendar-notification.ts
 
 A browser window opens; approve access. A token.json is saved locally.
 
-### Run automatically with launchd
+### 4. Run automatically with launchd
 
 ```
 ./setup-launchagent.sh
@@ -56,7 +51,7 @@ A browser window opens; approve access. A token.json is saved locally.
 
 This writes a user LaunchAgent to `~/Library/LaunchAgents/com.<your-user>.calendar-notifications.plist` and loads it to run every minute.
 
-### Unload/reload
+### 5. Unload/reload
 
 ```
 launchctl unload ~/Library/LaunchAgents/com.$USER.calendar-notifications.plist
