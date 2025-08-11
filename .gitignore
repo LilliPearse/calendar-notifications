@@ -1,4 +1,4 @@
-# Sensitive files
+# Sensitive
 credentials.json
 token.json
 .alerted.json
@@ -11,5 +11,5 @@ dist/
 # Logs
 *.log
 
-# macOS system junk
+# macOS junk
 .DS_Store

@@ -162,7 +162,7 @@ function showDialogSwiftDialog(
     "--quitkey",
     "ESC",
     "--icon",
-    "/Users/lillip/Code/calendar-notifications/hand-drawn-doodle-style-cartoon-exclamation-mark-free-vector.jpg",
+    path.join(ROOT, "assets", "exclamation.jpg"),
     "--button1text",
     "🚀 I’m joining",
     "--button2text",
