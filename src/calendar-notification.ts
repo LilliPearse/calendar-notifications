@@ -14,7 +14,19 @@ const ALERT_DURATION_SEC = parseInt(
   process.env.ALERT_DURATION_SEC || "120",
   10
 );
-const CALENDAR_ID = process.env.CALENDAR_ID || "primary";
+const CALENDAR_IDS = (process.env.CALENDAR_IDS || "primary")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// Optional labels (JSON in env). Example:
+// CALENDAR_LABELS='{"primary":"Personal","your_work_calendar_id@group.calendar.google.com":"Work"}'
+let CAL_LABELS: Record<string, string> = {};
+try {
+  CAL_LABELS = JSON.parse(process.env.CALENDAR_LABELS || "{}");
+} catch {}
+const labelFor = (id: string) =>
+  CAL_LABELS[id] || (id === "primary" ? "Personal" : "Other");
 
 const ROOT = path.resolve(__dirname, "..");
 const CRED_PATH = path.join(ROOT, "credentials.json");
@@ -22,7 +34,16 @@ const TOKEN_PATH = path.join(ROOT, "token.json");
 const CACHE_PATH = path.join(ROOT, ".alerted.json");
 
 type AlertCache = { [cacheKey: string]: number };
-const cacheKeyOf = (id: string, startIso: string) => `${id}@@${startIso}`;
+const cacheKeyOf = (calId: string, id: string, startIso: string) =>
+  `${calId}@@${id}@@${startIso}`;
+
+function dayUrlFor(startIso: string) {
+  const d = new Date(startIso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `https://calendar.google.com/calendar/r/day/${y}/${m}/${day}`;
+}
 
 function readJSON<T>(p: string, fallback: T): T {
   try {
@@ -168,8 +189,14 @@ function showDialogSwiftDialog(
     "--button2text",
     "😴 Snooze 5 min",
   ];
+
+  const openText =
+    url && url.includes("calendar.google.com")
+      ? "📆 Open Calendar"
+      : "🔗 Open link";
+
   if (url) {
-    args.push("--button3text", "🔗 Open link");
+    args.push("--button3text", openText);
   }
 
   const res = spawnSync(dialogPath, args, { encoding: "utf8" });
@@ -246,6 +273,7 @@ async function alertUser(
 }
 
 async function main() {
+  // Snooze guard
   try {
     const snoozeUntil = parseInt(
       fs.readFileSync(path.join(ROOT, ".snooze"), "utf8"),
@@ -253,7 +281,7 @@ async function main() {
     );
     if (!isNaN(snoozeUntil) && Date.now() < snoozeUntil) return;
   } catch {
-    // no snooze file, carry on
+    /* no snooze file */
   }
 
   const auth = await getAuth();
@@ -261,16 +289,49 @@ async function main() {
 
   const now = new Date();
   const max = new Date(Date.now() + (LEAD_MINUTES + 3) * 60 * 1000);
-  const res = await calendar.events.list({
-    calendarId: CALENDAR_ID,
-    timeMin: now.toISOString(),
-    timeMax: max.toISOString(),
-    singleEvents: true,
-    orderBy: "startTime",
-    maxResults: 10,
-  });
 
-  const items = res.data.items || [];
+  // Allow CALENDAR_IDS env (comma-separated). Fall back to existing CALENDAR_ID or "primary".
+  const CAL_IDS = (
+    process.env.CALENDAR_IDS ||
+    process.env.CALENDAR_ID ||
+    "primary"
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const labelFor = (id: string) => (id === "primary" ? "Personal" : "Work");
+
+  // Helper: Calendar day view URL (used when we only have free/busy)
+  const dayUrlFor = (startIso: string) => {
+    const d = new Date(startIso);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `https://calendar.google.com/calendar/r/day/${y}/${m}/${day}`;
+  };
+
+  // Fetch events for one calendar id
+  async function listFor(calId: string) {
+    const r = await calendar.events.list({
+      calendarId: calId,
+      timeMin: now.toISOString(),
+      timeMax: max.toISOString(),
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 10,
+    });
+    const items = r.data.items || [];
+    // attach calendarId for later
+    return items.map(
+      (ev) =>
+        ({ ...ev, _calendarId: calId } as typeof ev & { _calendarId: string })
+    );
+  }
+
+  // Fetch all calendars and flatten
+  const results = await Promise.all(CAL_IDS.map((id) => listFor(id)));
+  const items = results.flat();
 
   console.log(`[debug] Checking ${items.length} upcoming events:`);
   for (const ev of items) {
@@ -278,22 +339,31 @@ async function main() {
       ev.start?.dateTime ||
       (ev.start?.date ? ev.start.date + "T00:00:00Z" : "");
     const ms = startIso ? new Date(startIso).getTime() - Date.now() : NaN;
+    const label = labelFor((ev as any)._calendarId);
     console.log(
-      `[debug] ${ev.summary || "(No title)"} - starts in ${Math.round(
+      `[debug] [${label}] ${ev.summary || "Busy"} - starts in ${Math.round(
         ms / 60000
       )} min`
     );
   }
 
-  // Load and prune cache
+  // Load & prune cache
   const cache: AlertCache = readJSON(CACHE_PATH, {});
   const cutoff = Date.now() - 6 * 60 * 60 * 1000;
-  for (const [k, v] of Object.entries(cache)) {
-    if (v < cutoff) delete cache[k];
-  }
+  for (const [k, v] of Object.entries(cache)) if (v < cutoff) delete cache[k];
 
-  // Alert loop
+  // Sort by start time (tidy)
+  items.sort((a, b) => {
+    const aIso =
+      a.start?.dateTime || (a.start?.date ? a.start.date + "T00:00:00Z" : "");
+    const bIso =
+      b.start?.dateTime || (b.start?.date ? b.start.date + "T00:00:00Z" : "");
+    return new Date(aIso).getTime() - new Date(bIso).getTime();
+  });
+
+  // Alert loop (multi-calendar + free/busy aware)
   for (const ev of items) {
+    const calId = (ev as any)._calendarId as string;
     const id = ev.id!;
     const startIso =
       ev.start?.dateTime ||
@@ -308,18 +378,27 @@ async function main() {
     const withinLead = ms >= 0 && ms <= LEAD_MINUTES * 60 * 1000;
     if (!withinLead) continue;
 
-    const key = cacheKeyOf(id, startIso);
-    if (cache[key]) continue; // already alerted for this start time
+    // Include calendar id in the cache key without changing your helper signature
+    const key = cacheKeyOf(calId, id, startIso);
+    if (cache[key]) continue; // already alerted for this calendar+start
 
-    const link = (ev.hangoutLink ||
-      ev.conferenceData?.entryPoints?.find((p) => p.uri)?.uri) as
-      | string
-      | undefined;
+    // Title/link handling (free/busy returns "(Busy)" / no conferencing)
+    const label = labelFor(calId);
+    const hasRealTitle = !!(ev.summary && ev.summary.toLowerCase() !== "busy");
+    const displaySummary = hasRealTitle ? ev.summary! : `Busy block (${label})`;
 
-    await alertUser(ev.summary || "(No title)", startIso, link);
+    const meetLink =
+      ev.hangoutLink ||
+      (ev.conferenceData?.entryPoints?.find((p) => p.uri)?.uri as
+        | string
+        | undefined);
 
-    // Mark only after alert actually ran
-    cache[key] = Date.now();
+    // No link? Send them to Calendar day view
+    const openUrl = meetLink || dayUrlFor(startIso);
+
+    await alertUser(displaySummary, startIso, openUrl);
+
+    cache[key] = Date.now(); // mark after alert
   }
 
   writeJSON(CACHE_PATH, cache);
