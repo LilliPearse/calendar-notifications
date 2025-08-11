@@ -28,14 +28,14 @@ A tiny Node/TypeScript tool that checks your Google Calendar and pops a SwiftDia
 
 ### 3. Add your Google OAuth client
 
-3a. In Google Cloud Console, create an OAuth client ID of type Desktop.
-3b. Download the JSON as credentials.json and place it in the repo root:
+- In Google Cloud Console, create an OAuth client ID of type Desktop.
+- Download the JSON as credentials.json and place it in the repo root:
 
 ```
 ~/Code/calendar-notifications/credentials.json
 ```
 
-3c. Authenticale once:
+- Authenticale once:
 
 ```
 npx ts-node src/calendar-notification.ts
